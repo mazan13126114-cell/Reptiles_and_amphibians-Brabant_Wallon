@@ -1,0 +1,403 @@
+[
+    {
+        "id": "d23874584a8594c1",
+        "type": "tab",
+        "label": "Simple Biodiversity Dashboard",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "272557e6ff59cafb",
+        "type": "debug",
+        "z": "d23874584a8594c1",
+        "name": "Debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 850,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "4a38cbbe9ce08025",
+        "type": "inject",
+        "z": "d23874584a8594c1",
+        "name": "Start",
+        "props": [],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 110,
+        "y": 100,
+        "wires": [
+            [
+                "91be17f812142c52"
+            ]
+        ]
+    },
+    {
+        "id": "91be17f812142c52",
+        "type": "file in",
+        "z": "d23874584a8594c1",
+        "name": "Read CSV",
+        "filename": "C:\\\\Reptiles_and_amphibians-Brabant_Wallon\\\\data\\\\observations_06_2024.csv",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 250,
+        "y": 100,
+        "wires": [
+            [
+                "19f4a04bb7b774ae"
+            ]
+        ]
+    },
+    {
+        "id": "19f4a04bb7b774ae",
+        "type": "csv",
+        "z": "d23874584a8594c1",
+        "name": "Parse CSV",
+        "sep": ",",
+        "hdrin": true,
+        "hdrout": "none",
+        "multi": "mult",
+        "ret": "\\n",
+        "temp": "",
+        "skip": "0",
+        "strings": true,
+        "include_empty_strings": false,
+        "include_null_values": false,
+        "x": 410,
+        "y": 140,
+        "wires": [
+            [
+                "e9c1d4ee9790614c"
+            ]
+        ]
+    },
+    {
+        "id": "e9c1d4ee9790614c",
+        "type": "function",
+        "z": "d23874584a8594c1",
+        "name": "Count Species",
+        "func": "var data = msg.payload;\nvar counts = {};\nvar locationData = {};\n\n// Count species occurrences and collect location data\ndata.forEach(row => {\n    var species = row.species || row.species_name || \"Unknown\";\n    counts[species] = (counts[species] || 0) + 1;\n    \n    // Store location and date info for rare species\n    if (!locationData[species]) {\n        locationData[species] = [];\n    }\n    locationData[species].push({\n        location: row.location || \"Unknown\",\n        date: row.date || \"Unknown\"\n    });\n});\n\n// Get top 10 COMMON species for chart (exclude rare species)\nvar commonSpecies = Object.entries(counts)\n    .filter(([species, count]) => count > 3) // Only species with more than 3 observations\n    .sort(([,a], [,b]) => b - a)\n    .slice(0, 10);\n\nvar labels = commonSpecies.map(([species,]) => species);\nvar values = commonSpecies.map(([, count]) => count);\n\n// Find rare species (3 or fewer observations)\nvar rareSpecies = Object.entries(counts)\n    .filter(([species, count]) => count <= 3)\n    .sort(([,a], [,b]) => a - b); // Sort by count ascending\n\n// Store data for sharing between nodes\nflow.set(\"speciesCounts\", counts);\nflow.set(\"locationData\", locationData);\nflow.set(\"rareSpecies\", rareSpecies);\n\n// Format for dashboard chart node - only common species\nmsg.payload = [{\n    \"series\": [\"Species Count\"],\n    \"data\": [values],\n    \"labels\": labels\n}];\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 140,
+        "wires": [
+            [
+                "4d240389e82339eb",
+                "e7adde9303c34d8f",
+                "24f0bd40a8e109c6"
+            ]
+        ]
+    },
+    {
+        "id": "4d240389e82339eb",
+        "type": "ui_chart",
+        "z": "d23874584a8594c1",
+        "name": "Species Chart",
+        "group": "265d415493303598",
+        "order": 1,
+        "width": 12,
+        "height": 10,
+        "label": "All Species Distribution",
+        "chartType": "pie",
+        "legend": "true",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "nothing",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "15",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+            "#bcbd22"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 780,
+        "y": 100,
+        "wires": [
+            [
+                "272557e6ff59cafb"
+            ]
+        ]
+    },
+    {
+        "id": "e7adde9303c34d8f",
+        "type": "function",
+        "z": "d23874584a8594c1",
+        "name": "All Species Table",
+        "func": "var counts = flow.get(\"speciesCounts\") || {};\nvar locationData = flow.get(\"locationData\") || {};\n\n// Format data for table - ALL SPECIES\nvar tableData = [];\n\n// Get all species sorted by count (descending)\nvar allSpecies = Object.entries(counts)\n    .sort(([,a], [,b]) => b - a);\n\nallSpecies.forEach(([species, count]) => {\n    var locations = locationData[species] || [];\n    var uniqueLocations = [...new Set(locations.map(l => l.location))];\n    var recentDate = locations.length > 0 ? locations[locations.length - 1].date : \"Unknown\";\n    \n    tableData.push({\n        \"Species\": species,\n        \"Observations\": count,\n        \"Locations\": uniqueLocations.slice(0, 3).join(\", \") + (uniqueLocations.length > 3 ? \"...\" : \"\"),\n        \"Recent Date\": recentDate\n    });\n});\n\nmsg.payload = tableData;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 710,
+        "y": 260,
+        "wires": [
+            [
+                "6e39fc81163296c7"
+            ]
+        ]
+    },
+    {
+        "id": "6e39fc81163296c7",
+        "type": "ui_table",
+        "z": "d23874584a8594c1",
+        "group": "265d415493303598",
+        "name": "All Species Table",
+        "order": 3,
+        "width": 12,
+        "height": 8,
+        "columns": [
+            {
+                "field": "Species",
+                "title": "Species Name",
+                "width": "",
+                "align": "left",
+                "formatter": "plaintext",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            },
+            {
+                "field": "Observations",
+                "title": "Count",
+                "width": "",
+                "align": "center",
+                "formatter": "plaintext",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            },
+            {
+                "field": "Locations",
+                "title": "Locations",
+                "width": "",
+                "align": "left",
+                "formatter": "plaintext",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            },
+            {
+                "field": "Recent Date",
+                "title": "Latest Observation",
+                "width": "",
+                "align": "center",
+                "formatter": "plaintext",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            }
+        ],
+        "outputs": 0,
+        "cts": false,
+        "x": 930,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "24f0bd40a8e109c6",
+        "type": "function",
+        "z": "d23874584a8594c1",
+        "name": "Format Bar Chart",
+        "func": "var counts = flow.get(\"speciesCounts\") || {};\n\n// Get all species sorted by count for bar chart\nvar allSpecies = Object.entries(counts)\n    .sort(([,a], [,b]) => b - a);\n\nvar labels = allSpecies.map(([species,]) => species);\nvar values = allSpecies.map(([, count]) => count);\n\n// Format for bar chart\nmsg.payload = [{\n    \"series\": [\"Observations\"],\n    \"data\": [values],\n    \"labels\": labels\n}];\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 610,
+        "y": 380,
+        "wires": [
+            [
+                "45696bfce0f6d733"
+            ]
+        ]
+    },
+    {
+        "id": "45696bfce0f6d733",
+        "type": "ui_chart",
+        "z": "d23874584a8594c1",
+        "name": "Species Bar Chart",
+        "group": "265d415493303598",
+        "order": 2,
+        "width": 12,
+        "height": 10,
+        "label": "Species Observations (Bar Chart)",
+        "chartType": "horizontalBar",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "nothing",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+            "#bcbd22"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 820,
+        "y": 380,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "054a6fe66598caf9",
+        "type": "inject",
+        "z": "d23874584a8594c1",
+        "name": "Show Graph",
+        "props": [],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 190,
+        "y": 540,
+        "wires": [
+            [
+                "954e62863fa24beb"
+            ]
+        ]
+    },
+    {
+        "id": "954e62863fa24beb",
+        "type": "file in",
+        "z": "d23874584a8594c1",
+        "name": "mazanapicRead",
+        "filename": "C:\\\\Reptiles_and_amphibians-Brabant_Wallon\\\\data\\\\seasonal_observations.png",
+        "filenameType": "str",
+        "format": "",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 360,
+        "y": 540,
+        "wires": [
+            [
+                "dae0e61531fccbe0"
+            ]
+        ]
+    },
+    {
+        "id": "dae0e61531fccbe0",
+        "type": "function",
+        "z": "d23874584a8594c1",
+        "name": "",
+        "func": "msg.payload = 'data:image/png;base64,' + msg.payload.toString('base64');\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 540,
+        "wires": [
+            [
+                "775507fd95e2f7e8"
+            ]
+        ]
+    },
+    {
+        "id": "775507fd95e2f7e8",
+        "type": "ui_template",
+        "z": "d23874584a8594c1",
+        "group": "265d415493303598",
+        "name": "",
+        "order": 4,
+        "width": 12,
+        "height": 8,
+        "format": "<img ng-src=\"{{msg.payload}}\" style=\"width:100%; height:auto;\">",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": false,
+        "templateScope": "local",
+        "className": "",
+        "x": 860,
+        "y": 500,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "265d415493303598",
+        "type": "ui_group",
+        "z": "d23874584a8594c1",
+        "name": "mazanaWork",
+        "tab": "4b4fd623797e684c",
+        "order": 1,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "4b4fd623797e684c",
+        "type": "ui_tab",
+        "z": "d23874584a8594c1",
+        "name": "Dashboard",
+        "icon": "dashboard",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    }
+]
