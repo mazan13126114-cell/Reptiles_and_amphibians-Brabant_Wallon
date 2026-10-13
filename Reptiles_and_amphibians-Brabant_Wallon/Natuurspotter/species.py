@@ -20,10 +20,10 @@ import wikipedia
 
 BASE_URL = "https://waarnemingen.be"
 
-def clean_text(mazan):
-    if not isinstance(mazan, str):
-        return mazan
-    return unicodedata.normalize('NFKD', mazan).encode('latin-1', 'ignore').decode('latin-1')
+def clean_text(text):
+    if not isinstance(text, str):
+        return text
+    return unicodedata.normalize('NFKD', text).encode('latin-1', 'ignore').decode('latin-1')
 
 
 
@@ -54,8 +54,8 @@ class PDF(FPDF):
 
 def get_scientific_name_from_common(common_name):
     try:
-        mazana = wikipedia.page(common_name)
-        soup = BeautifulSoup(mazana.html(), "html.parser")
+        wiki_page = wikipedia.page(common_name)
+        soup = BeautifulSoup(wiki_page.html(), "html.parser")
 
         italic_bold = soup.select_one("i b")
         if italic_bold:
@@ -67,8 +67,8 @@ def get_scientific_name_from_common(common_name):
         if sci_name and "." in sci_name.split()[0]:
             genus_abbreviation = sci_name.split()[0].strip(".")
             first_para = soup.find("p").text
-            maza = first_para.split()
-            for word in maza:
+            words = first_para.split()
+            for word in words:
                 if word.startswith(genus_abbreviation) and word.isalpha():
                     sci_name = sci_name.replace(genus_abbreviation + ".", word, 1)
                     break
@@ -142,8 +142,8 @@ def get_species_info(species_id, common_name, scientific_name):
 
     try:
         url = f"{BASE_URL}/species/{species_id}/"
-        mazana = requests.get(url)
-        soup = BeautifulSoup(mazana.content, "html.parser")
+        page_response = requests.get(url)
+        soup = BeautifulSoup(page_response.content, "html.parser")
         rarity_span = soup.select_one(".pull-right span.hidden-sm")
         if rarity_span:
             rarity = rarity_span.text.strip()
@@ -176,8 +176,8 @@ def get_species_info(species_id, common_name, scientific_name):
         soup = BeautifulSoup(resp.content, "html.parser")
         table = soup.find("table", class_="table-bordered")
         if table:
-            maza = table.find("tbody").find_all("tr")[:10]
-            for row in maza:
+            rows = table.find("tbody").find_all("tr")[:10]
+            for row in rows:
                 cols = row.find_all("td")
                 if len(cols) >= 5:
                     observations.append({
@@ -221,11 +221,11 @@ def get_species_info(species_id, common_name, scientific_name):
     pdf.cell(50, 10, "Observer", 1, ln=True)
 
     if observations:
-        for mazan in observations:
-            pdf.cell(40, 10, clean_text(mazan['date']), 1)
-            pdf.cell(25, 10, clean_text(mazan['count']), 1)
-            pdf.cell(75, 10, clean_text(mazan['location'][:30]), 1)
-            pdf.cell(50, 10, clean_text(mazan['observer'][:25]), 1, ln=True)
+        for obs in observations:
+            pdf.cell(40, 10, clean_text(obs['date']), 1)
+            pdf.cell(25, 10, clean_text(obs['count']), 1)
+            pdf.cell(75, 10, clean_text(obs['location'][:30]), 1)
+            pdf.cell(50, 10, clean_text(obs['observer'][:25]), 1, ln=True)
     else:
         pdf.cell(0, 10, "No recent observations found.", ln=True)
 
@@ -331,13 +331,13 @@ def observations_map(day=None):
 
     try:
         response = requests.get(geojson_url)
-        mazana = response.json()
+        geojson = response.json()
 
         fmap = folium.Map(location=[50.85, 4.35], zoom_start=8)
         cluster = MarkerCluster().add_to(fmap)
         species_cache = {}
 
-        for feature in mazana.get("features", []):
+        for feature in geojson.get("features", []):
             props = feature.get("properties", {})
             coords = feature.get("geometry", {}).get("coordinates", [None, None])
             lon, lat = coords if len(coords) == 2 else (None, None)
@@ -350,12 +350,12 @@ def observations_map(day=None):
                 species_cache[species_id] = get_species_names(species_id)
 
             popup_text = species_cache[species_id]
-            maza = f"#{randint(0, 0xFFFFFF):06x}"
+            marker_color = f"#{randint(0, 0xFFFFFF):06x}"
 
             folium.CircleMarker(
                 location=[lat, lon],
                 radius=6,
-                color=maza,
+                color=marker_color,
                 fill=True,
                 fill_opacity=0.7,
                 popup=popup_text
@@ -393,13 +393,13 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
 def month_to_season(month_abbr):
-    mazan = {
+    seasons = {
         "jan": "Winter", "feb": "Winter", "dec": "Winter",
         "mar": "Spring", "apr": "Spring", "may": "Spring",
         "jun": "Summer", "jul": "Summer", "aug": "Summer",
         "sep": "Autumn", "oct": "Autumn", "nov": "Autumn"
     }
-    return mazan.get(month_abbr.lower(), None)
+    return seasons.get(month_abbr.lower(), None)
 
 def ask_chatgpt(prompt):
     try:
@@ -415,10 +415,10 @@ def ask_chatgpt(prompt):
         )
         
         # Extract the assistant's response
-        mazana = response["choices"][0]["message"]["content"]
+        answer = response["choices"][0]["message"]["content"]
         print("\n LLM Insight:")
-        print(mazana)
-        return mazana
+        print(answer)
+        return answer
     except Exception as e:
         print(f" Error: {e}")
         return None
@@ -440,9 +440,9 @@ def seasonal_analysis(species_name, year):
         driver.get(search_url)
         time.sleep(2)
 
-        maza = driver.find_elements(By.CSS_SELECTOR, "a[href^='/species/']")
+        species_links = driver.find_elements(By.CSS_SELECTOR, "a[href^='/species/']")
         species_id = None
-        for link in maza:
+        for link in species_links:
             href = link.get_attribute("href")
             if "/species/" in href and href.count("/") == 5:
                 match = re.search(r'/species/(\d+)/', href)
@@ -464,10 +464,10 @@ def seasonal_analysis(species_name, year):
             print(" Stats table not found.")
             return
 
-        mazana = table.find_all("tr")[1:]
+        table_rows = table.find_all("tr")[1:]
         seasonal_counts = defaultdict(int)
 
-        for row in mazana:
+        for row in table_rows:
             cols = row.find_all("td")
             if len(cols) >= 2:
                 month_name = cols[0].text.strip()
@@ -568,18 +568,18 @@ def biodiversity_analysis(month=None, year=None):
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         table = soup.select_one("table.table-condensed.stupid-table")
 
-        maza = table.select("tbody tr") if table else []
-        if not maza:
+        table_rows = table.select("tbody tr") if table else []
+        if not table_rows:
             print(" No data rows found in tbody.")
             return
 
         species_data = []
 
-        for row in maza:
+        for row in table_rows:
             cols = row.find_all("td")
             if len(cols) >= 2:
                 # There are usually multiple <a> tags: one for map icon, one for species name
-                mazana = cols[1].find_all("a", href=True)
+                species_links = cols[1].find_all("a", href=True)
 
                 # Filter out the <a> tags that have no visible text other than icon <i>
                 def has_visible_text(a_tag):
@@ -587,7 +587,7 @@ def biodiversity_analysis(month=None, year=None):
                     return bool(visible_text)
 
                 species_link = None
-                for link in mazana:
+                for link in species_links:
                     if has_visible_text(link):
                         species_link = link
                         break  # Found the correct species link with visible name text
@@ -644,8 +644,8 @@ def biodiversity_analysis(month=None, year=None):
         with open(filename, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=["date", "species_name", "location"])
             writer.writeheader()
-            for mazan in species_data:
-                writer.writerow(mazan)
+            for row in species_data:
+                writer.writerow(row)
 
         species_counts = {}
         for s in species_data:

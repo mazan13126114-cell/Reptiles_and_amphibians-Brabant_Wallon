@@ -10,10 +10,10 @@ Search for a species by name and get a clean dataset and ready-to-read results, 
 
 ## What it does
 
-- **Retrieves** observations for a chosen reptile or amphibian species in Walloon Brabant
-- **Cleans and structures** the records with Pandas
-- **Analyses** seasonal patterns (when in the year the species is observed)
-- **Maps** observation locations in an interactive HTML map
+- **Collects** live observations for a chosen reptile or amphibian species in Walloon Brabant by scraping [waarnemingen.be](https://waarnemingen.be) and [observation.org](https://observation.org) (requests, BeautifulSoup, Selenium), and looks up scientific names on Wikipedia
+- **Cleans and structures** the records and exports them to CSV
+- **Analyses** seasonal patterns (when in the year the species is observed) with Matplotlib, with a short written summary generated through the OpenAI API
+- **Maps** observation locations in an interactive Folium map
 - **Reports** the results in an automated PDF species report
 - **Automates** the data flow with a Node-RED workflow
 
@@ -21,7 +21,7 @@ Example species included in this repo: Common Frog, Fire Salamander and Smooth N
 
 ## Tech stack
 
-Python · Pandas · Matplotlib · Jupyter Notebook · Node-RED
+Python · requests · BeautifulSoup · Selenium · Matplotlib · Folium · FPDF · OpenAI API · Jupyter Notebook · Node-RED
 
 ## Project structure
 
@@ -48,8 +48,16 @@ Reptiles_and_amphibians-Brabant_Wallon
 
 ```bash
 git clone https://github.com/mazan13126114-cell/Reptiles_and_amphibians-Brabant_Wallon.git
-cd Reptiles_and_amphibians-Brabant_Wallon
+cd Reptiles_and_amphibians-Brabant_Wallon/Reptiles_and_amphibians-Brabant_Wallon
 pip install -e .
+```
+
+This installs all the Python dependencies. You also need Google Chrome (Selenium uses it to look up species).
+
+The seasonal analysis uses the OpenAI API. Put your key in a `.env` file next to `setup.py` (it is loaded automatically and should never be committed):
+
+```
+OPENAI_API_KEY=your-key
 ```
 
 Then open **`demo.ipynb`** in Jupyter for a step-by-step example: choose a species, retrieve its observations, and generate the chart, map and report.
@@ -58,10 +66,10 @@ Then open **`demo.ipynb`** in Jupyter for a step-by-step example: choose a speci
 
 | Output | File |
 | --- | --- |
-| Cleaned observations (CSV) | [`data/observations_08_2021.csv`](data/observations_08_2021.csv) |
-| Seasonal chart | [`data/seasonal_observations.png`](data/seasonal_observations.png) |
-| Interactive map (download and open in a browser) | [`data/observations_map.html`](data/observations_map.html) |
-| Species report | [`data/species_report.pdf`](data/species_report.pdf) |
+| Cleaned observations (CSV) | [`data/observations_08_2021.csv`](Reptiles_and_amphibians-Brabant_Wallon/data/observations_08_2021.csv) |
+| Seasonal chart | [`data/seasonal_observations.png`](Reptiles_and_amphibians-Brabant_Wallon/data/seasonal_observations.png) |
+| Interactive map (download and open in a browser) | [`data/observations_map.html`](Reptiles_and_amphibians-Brabant_Wallon/data/observations_map.html) |
+| Species report | [`data/species_report.pdf`](Reptiles_and_amphibians-Brabant_Wallon/data/species_report.pdf) |
 
 The number of observations depends on the species searched, so results differ from one species to the next.
 
@@ -82,4 +90,4 @@ The `Node-Red/` folder contains the flow used to automate the process, with scre
 
 ## License
 
-See [`License.txt`](License.txt).
+See [`License.txt`](Reptiles_and_amphibians-Brabant_Wallon/License.txt).
