@@ -1,24 +1,67 @@
 import os
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
-import folium
-from folium.plugins import MarkerCluster
-from random import randint
-from fpdf import FPDF
-from PIL import Image
-from io import BytesIO
+import re
+import csv
+import time
+import hashlib
 import unicodedata
-from datetime import timedelta
+from collections import defaultdict
+from datetime import datetime, timedelta
+from urllib.parse import urljoin, quote_plus
+
+import requests
 import wikipedia
+import folium
+import matplotlib.pyplot as plt
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from folium.plugins import MarkerCluster
+from fpdf import FPDF
+from openai import OpenAI
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 
 
 #-----------------------------------------------------------------------------------------------------------------------
-# -------------------------------Base URL for the waarnemingen.be website------------------------------------------------------
+# Settings
+# observations.be is the French-language version of waarnemingen.be: same database, same species IDs.
 #-----------------------------------------------------------------------------------------------------------------------
 
+BASE_URL = "https://observations.be"
+WAARNEMINGEN_URL = "https://waarnemingen.be"
+OBSERVATION_ORG_URL = "https://observation.org"
+REQUEST_TIMEOUT = 15  # seconds
 
-BASE_URL = "https://waarnemingen.be"
+# The group name is shown in the site's language, so accept French, Dutch and English
+REPTILE_GROUP_NAMES = {"reptiles et amphibiens", "reptielen en amfibieen", "reptiles and amphibians"}
+
+load_dotenv()  # reads OPENAI_API_KEY (and optionally OPENAI_MODEL) from a .env file
+
+
+def fetch(url):
+    """Download a page with a timeout and raise an error for HTTP failures (404, 500, ...)."""
+    response = requests.get(url, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response
+
+
+def make_driver(headless=True):
+    """Start Chrome for Selenium. Headless means no browser window opens."""
+    options = Options()
+    if headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+
+def strip_accents(text):
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
 
 def clean_text(text):
     if not isinstance(text, str):
@@ -78,53 +121,35 @@ def get_scientific_name_from_common(common_name):
         return None
     
     
-#----------------------------Get species ID from taxon file based on scientific name-----------------------------
-
-
-
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-import re
+#----------------------------Find the species ID on waarnemingen.be-----------------------------
 
 
 def get_species_id(common_name):
+    """Search waarnemingen.be for a species name and return its numeric ID (or None)."""
+    common_name = common_name.strip()
+    url = f"{WAARNEMINGEN_URL}/species/search/?q={quote_plus(common_name)}"
+    print(f"Looking up species ID for: {common_name}")
+
+    # Case-insensitive match, so "common frog" finds "Common Frog"
+    upper, lower = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+    xpath = (
+        f'//td[translate(@data-sort-value, "{upper}", "{lower}")'
+        f' = "{common_name.lower()}"]/a'
+    )
+
+    driver = None
     try:
-        print(f"Looking up species for: {common_name}")
-        url = f"https://waarnemingen.be/species/search/?q={common_name}"
-        print(f"Opening: {url}")
-
-        options = Options()
-       
-        options.add_argument("--start-maximized")
-
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        driver = make_driver()
         driver.get(url)
-
-        # Wait for the correct table cell to appear
-        xpath = f'//td[@data-sort-value="{common_name}"]/a'
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, xpath))
-        )
-
-        link = driver.find_element(By.XPATH, xpath)
-        href = link.get_attribute("href")  # e.g. /species/440/
-        match = re.search(r"/species/(\d+)/", href)
-        species_id = match.group(1) if match else None
-        driver.quit()
-        return species_id
-
+        link = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, xpath)))
+        match = re.search(r"/species/(\d+)/", link.get_attribute("href"))
+        return match.group(1) if match else None
     except Exception as e:
-        print("Error getting species ID from web:", e)
+        print(f"Could not find '{common_name}' on {WAARNEMINGEN_URL}: {e}")
         return None
-
-
-
-
+    finally:
+        if driver:
+            driver.quit()  # always close the browser, even after an error
 
 
 #--------------------------------------------------------------------------------------------------------
@@ -141,28 +166,27 @@ def get_species_info(species_id, common_name, scientific_name):
     rarity, image_url = "Unknown", None
 
     try:
-        url = f"{BASE_URL}/species/{species_id}/"
-        page_response = requests.get(url)
+        page_response = fetch(f"{BASE_URL}/species/{species_id}/")
         soup = BeautifulSoup(page_response.content, "html.parser")
         rarity_span = soup.select_one(".pull-right span.hidden-sm")
         if rarity_span:
             rarity = rarity_span.text.strip()
-    except:
-        pass
+    except Exception as e:
+        print(f"Could not read rarity: {e}")
 
     try:
-        photo_url = f"{BASE_URL}/species/{species_id}/photos/"
-        resp = requests.get(photo_url)
+        resp = fetch(f"{BASE_URL}/species/{species_id}/photos/")
         soup = BeautifulSoup(resp.content, "html.parser")
         img_tag = soup.select_one("figure.lightbox-gallery img")
         if img_tag and img_tag.get("src"):
-            image_url = BASE_URL + img_tag["src"]
-    except:
-        pass
+            image_url = urljoin(BASE_URL, img_tag["src"])  # works for relative and full links
+    except Exception as e:
+        print(f"Could not find a photo: {e}")
 
     try:
         description = wikipedia.summary(common_name, sentences=3)
-    except:
+    except Exception as e:
+        print(f"Could not get a Wikipedia summary: {e}")
         description = "No Wikipedia summary available."
 
     observations = []
@@ -172,7 +196,7 @@ def get_species_info(species_id, common_name, scientific_name):
             f"?date_after={start_date}&date_before={end_date}&species={species_id}"
             f"&species_group=3&country_division=25"
         )
-        resp = requests.get(obs_url)
+        resp = fetch(obs_url)
         soup = BeautifulSoup(resp.content, "html.parser")
         table = soup.find("table", class_="table-bordered")
         if table:
@@ -186,11 +210,11 @@ def get_species_info(species_id, common_name, scientific_name):
                         "location": cols[3].text.strip(),
                         "observer": cols[4].text.strip()
                     })
-    except:
-        pass
+    except Exception as e:
+        print(f"Could not read recent observations: {e}")
 
     os.makedirs("data", exist_ok=True)
-    filename = "data/species_report.pdf"
+    filename = f"data/{common_name.replace(' ', '_')}_report.pdf"
     pdf = PDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -204,13 +228,13 @@ def get_species_info(species_id, common_name, scientific_name):
 
     if image_url:
         try:
-            img_data = requests.get(image_url).content
+            img_data = fetch(image_url).content
             img_path = f"data/{common_name.replace(' ', '_')}.jpg"
             with open(img_path, "wb") as f:
                 f.write(img_data)
             pdf.image(img_path, w=100)
-        except:
-            pass
+        except Exception as e:
+            print(f"Could not add the photo to the PDF: {e}")
 
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, clean_text("Recent Observations:"), ln=True)
@@ -238,8 +262,7 @@ def get_species_info(species_id, common_name, scientific_name):
 #-----------------------------------------------------------------------------------------
 def get_group_name(species_id):
     try:
-        url = f"{BASE_URL}/species/{species_id}/"
-        response = requests.get(url)
+        response = fetch(f"{BASE_URL}/species/{species_id}/")
         soup = BeautifulSoup(response.content, "html.parser")
 
         # Get the outermost btn-group with species hierarchy
@@ -274,7 +297,7 @@ def species_info(common_name):
     group_name = get_group_name(species_id)
     print(f" Detected group: {group_name}")
 
-    if group_name.lower() != "reptiles et amphibiens":
+    if strip_accents(group_name).lower() not in REPTILE_GROUP_NAMES:
         print(f"⚠️  Group '{group_name}' is not supported. Only 'Reptiles and Amphibians' are allowed.")
         return
 
@@ -289,9 +312,9 @@ def species_info(common_name):
 
 
 def get_species_names(species_id):
-    url = f"https://observation.org/species/{species_id}/"
+    url = f"{OBSERVATION_ORG_URL}/species/{species_id}/"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = fetch(url)
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         # Extract common name
@@ -324,14 +347,13 @@ def observations_map(day=None):
         day = datetime.today().strftime("%Y-%m-%d")
 
     geojson_url = (
-        f"https://waarnemingen.be/countries/division/25/observations/"
+        f"{WAARNEMINGEN_URL}/countries/division/25/observations/"
         f"?date_after={day}&date_before={day}&species_group=3&country_division=25&geojson=true"
     )
     print(f"Using GeoJSON URL: {geojson_url}")
 
     try:
-        response = requests.get(geojson_url)
-        geojson = response.json()
+        geojson = fetch(geojson_url).json()
 
         fmap = folium.Map(location=[50.85, 4.35], zoom_start=8)
         cluster = MarkerCluster().add_to(fmap)
@@ -350,7 +372,8 @@ def observations_map(day=None):
                 species_cache[species_id] = get_species_names(species_id)
 
             popup_text = species_cache[species_id]
-            marker_color = f"#{randint(0, 0xFFFFFF):06x}"
+            # Same colour for every observation of the same species
+            marker_color = "#" + hashlib.md5(species_id.encode()).hexdigest()[:6]
 
             folium.CircleMarker(
                 location=[lat, lon],
@@ -370,26 +393,10 @@ def observations_map(day=None):
         print(f"Error generating map: {e}")
         
         
-        #-----------------------------------------------------------------
-        #------------gonna start over for seasonal analysis--------------------
-        #------------------------------------------------------------------
-import os
-import time
-import re
-from collections import defaultdict
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from bs4 import BeautifulSoup
-from datetime import datetime
-import matplotlib.pyplot as plt
-import openai
-from dotenv import load_dotenv
 
-#------writing my api in env file and loading it here--------------------
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
+#--------------------------------------------------------------------------------------
+#------------Seasonal analysis----------------------
+#--------------------------------------------------------------------------------------
 
 
 def month_to_season(month_abbr):
@@ -402,25 +409,24 @@ def month_to_season(month_abbr):
     return seasons.get(month_abbr.lower(), None)
 
 def ask_chatgpt(prompt):
+    """Ask an OpenAI model for a short explanation. Returns None if no API key is set or the call fails."""
+    if not os.getenv("OPENAI_API_KEY"):
+        print("No OPENAI_API_KEY found, so the AI explanation is skipped.")
+        return None
     try:
-        print("\n Asking ChatGPT 3.5...")
-        
-        # Use OpenAI's ChatGPT API with the correct method
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        print(f"\nAsking {model} for an explanation...")
+        client = OpenAI()
+        response = client.chat.completions.create(
+            model=model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides scientific explanations."},
-                {"role": "user", "content": prompt}
-            ]
+                {"role": "user", "content": prompt},
+            ],
         )
-        
-        # Extract the assistant's response
-        answer = response["choices"][0]["message"]["content"]
-        print("\n LLM Insight:")
-        print(answer)
-        return answer
+        return response.choices[0].message.content
     except Exception as e:
-        print(f" Error: {e}")
+        print(f"OpenAI request failed: {e}")
         return None
 
 #------------------------------------Main Function seasonal_analysis-------------------------
@@ -428,33 +434,34 @@ def ask_chatgpt(prompt):
 def seasonal_analysis(species_name, year):
     print(f" Analyzing seasonality for {species_name} in {year}...")
 
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    driver = webdriver.Chrome(options=chrome_options)
+    driver = make_driver()
 
     try:
         # Step 1: Search species
-        search_url = f"https://observation.org/search/?q={species_name.replace(' ', '+')}"
+        search_url = f"{OBSERVATION_ORG_URL}/search/?q={quote_plus(species_name)}"
         driver.get(search_url)
         time.sleep(2)
 
         species_links = driver.find_elements(By.CSS_SELECTOR, "a[href^='/species/']")
-        species_id = None
+        candidates = []
         for link in species_links:
-            href = link.get_attribute("href")
-            if "/species/" in href and href.count("/") == 5:
-                match = re.search(r'/species/(\d+)/', href)
-                if match:
-                    species_id = match.group(1)
-                    break
+            href = link.get_attribute("href") or ""
+            match = re.search(r'/species/(\d+)/?$', href)
+            if match:
+                candidates.append((link.text.strip().lower(), match.group(1)))
+
+        # Prefer the result whose name matches the search, instead of blindly taking the first link
+        wanted = species_name.strip().lower()
+        species_id = next((sid for text, sid in candidates if wanted in text), None)
+        if species_id is None and candidates:
+            species_id = candidates[0][1]
+            print(f" No exact name match, using the first search result (ID {species_id}).")
 
         if not species_id:
             print(" Species ID not found.")
             return
 
-        stats_url = f"https://observation.org/species/{species_id}/statistics/?year={year}"
+        stats_url = f"{OBSERVATION_ORG_URL}/species/{species_id}/statistics/?year={year}"
         driver.get(stats_url)
         time.sleep(2)
 
@@ -471,7 +478,7 @@ def seasonal_analysis(species_name, year):
             cols = row.find_all("td")
             if len(cols) >= 2:
                 month_name = cols[0].text.strip()
-                obs = cols[1].text.strip().replace(",", "")
+                obs = re.sub(r"\D", "", cols[1].text)  # keep digits only ("1,234" or "1 234" -> "1234")
                 month_abbr = month_name[:3].lower()
                 season = month_to_season(month_abbr)
 
@@ -513,6 +520,7 @@ def seasonal_analysis(species_name, year):
         # ---------------- Call ChatGPT for explanation
         result = ask_chatgpt(prompt)
         if result:
+            print("\nAI explanation:")
             print(result)
 
     except Exception as e:
@@ -524,19 +532,6 @@ def seasonal_analysis(species_name, year):
 #----------------Analyze biodiversity by scraping species observations for a given month/year----------
 #--------------------------------------------------------------------------------------------
 
-
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from bs4 import BeautifulSoup
-from datetime import datetime
-import time
-import csv
-import os
-
-BASE_URL = "https://observations.be"
 
 def biodiversity_analysis(month=None, year=None):
     now = datetime.now()
@@ -552,12 +547,7 @@ def biodiversity_analysis(month=None, year=None):
     url = f"{BASE_URL}/countries/division/25/species/?species_group_id=3&filter_month={month}&filter_year={year}&include_exotic_and_extinct=on"
     print(f"Scraping live page: {url}")
 
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-
-    driver = webdriver.Chrome(options=chrome_options)
+    driver = make_driver()
 
     try:
         driver.get(url)

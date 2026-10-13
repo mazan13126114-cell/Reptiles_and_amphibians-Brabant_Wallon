@@ -18,7 +18,7 @@ setup(
         "fpdf",
         "Pillow",
         "matplotlib",
-        "openai==0.28",
+        "openai>=1.0",
         "python-dotenv",
     ],
 )

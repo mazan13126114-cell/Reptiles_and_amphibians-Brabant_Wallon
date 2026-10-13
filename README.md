@@ -54,11 +54,15 @@ pip install -e .
 
 This installs all the Python dependencies. You also need Google Chrome (Selenium uses it to look up species).
 
-The seasonal analysis uses the OpenAI API. Put your key in a `.env` file next to `setup.py` (it is loaded automatically and should never be committed):
+The seasonal analysis can add a short AI explanation through the OpenAI API. Put your key in a `.env` file in the folder you run the notebook from (it is loaded automatically and should never be committed). Without a key, everything else still works and the AI step is skipped.
 
 ```
 OPENAI_API_KEY=your-key
+# optional, defaults to gpt-4o-mini
+OPENAI_MODEL=gpt-4o-mini
 ```
+
+Species reports are saved as `data/<Species_Name>_report.pdf`, so reports for different species don't overwrite each other.
 
 Then open **`demo.ipynb`** in Jupyter for a step-by-step example: choose a species, retrieve its observations, and generate the chart, map and report.
 
